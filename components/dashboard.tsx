@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Target, Trophy, Plus, Calendar, CheckCircle2, Zap, Settings, LogOut, Star } from "lucide-react"
+import { Target, Trophy, Plus, Calendar, CheckCircle2, Zap, Settings, LogOut, Star, Database } from "lucide-react"
 import GoalForm from "@/components/goal-form"
 import TaskList from "@/components/task-list"
 import ProfileSettings from "@/components/profile-settings"
+import DataManagement from "@/components/data-management"
 import GoalCard from "@/components/goal-card"
 
 interface User {
@@ -207,10 +208,14 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3 mb-8">
+          <TabsList className="grid w-full grid-cols-4 mb-8">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="goals">Goals</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
+            <TabsTrigger value="data">
+              <Database className="h-4 w-4 mr-1" />
+              Data
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" className="space-y-6">
@@ -402,6 +407,10 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
 
           <TabsContent value="settings">
             <ProfileSettings user={user} onUpdate={loadData} />
+          </TabsContent>
+
+          <TabsContent value="data">
+            <DataManagement onDataUpdated={loadData} />
           </TabsContent>
         </Tabs>
       </main>

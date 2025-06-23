@@ -23,7 +23,13 @@ export async function GET(request: NextRequest) {
 
   try {
     const goals = await sql`
-      SELECT id, user_id, title, description, target_date, created_at
+      SELECT 
+        id, 
+        user_id, 
+        title, 
+        description, 
+        target_date::text as target_date, 
+        created_at::text as created_at
       FROM goals 
       WHERE user_id = ${user.userId}
       ORDER BY created_at DESC
@@ -61,7 +67,13 @@ export async function POST(request: NextRequest) {
     const newGoal = await sql`
       INSERT INTO goals (user_id, title, description, target_date)
       VALUES (${user.userId}, ${title}, ${description}, ${targetDate})
-      RETURNING id, user_id, title, description, target_date, created_at
+      RETURNING 
+        id, 
+        user_id, 
+        title, 
+        description, 
+        target_date::text as target_date, 
+        created_at::text as created_at
     `
 
     const goal = newGoal[0]

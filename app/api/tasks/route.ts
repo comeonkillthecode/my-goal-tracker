@@ -23,7 +23,16 @@ export async function GET(request: NextRequest) {
 
   try {
     const tasks = await sql`
-      SELECT t.id, t.goal_id, t.type, t.description, t.points, t.completed, t.date, t.is_template, t.created_at
+      SELECT 
+        t.id, 
+        t.goal_id, 
+        t.type, 
+        t.description, 
+        t.points, 
+        t.completed, 
+        t.date::text as date,
+        t.is_template, 
+        t.created_at::text as created_at
       FROM tasks t
       INNER JOIN goals g ON t.goal_id = g.id
       WHERE g.user_id = ${user.userId}
@@ -74,7 +83,16 @@ export async function POST(request: NextRequest) {
     const newTask = await sql`
       INSERT INTO tasks (goal_id, type, description, points, completed, date, is_template)
       VALUES (${goalId}, ${type}, ${description}, ${points}, ${completed || false}, ${date}, ${isTemplate || false})
-      RETURNING id, goal_id, type, description, points, completed, date, is_template, created_at
+      RETURNING 
+        id, 
+        goal_id, 
+        type, 
+        description, 
+        points, 
+        completed, 
+        date::text as date, 
+        is_template, 
+        created_at::text as created_at
     `
 
     const task = newTask[0]

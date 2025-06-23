@@ -32,7 +32,15 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       WHERE tasks.id = ${taskId} 
         AND tasks.goal_id = goals.id 
         AND goals.user_id = ${user.userId}
-      RETURNING tasks.id, tasks.goal_id, tasks.type, tasks.description, tasks.points, tasks.completed, tasks.date, tasks.is_template
+      RETURNING 
+        tasks.id, 
+        tasks.goal_id, 
+        tasks.type, 
+        tasks.description, 
+        tasks.points, 
+        tasks.completed, 
+        tasks.date::text as date, 
+        tasks.is_template
     `
 
     if (updatedTask.length === 0) {
@@ -89,7 +97,15 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
       WHERE tasks.id = ${taskId} 
         AND tasks.goal_id = goals.id 
         AND goals.user_id = ${user.userId}
-      RETURNING tasks.id, tasks.goal_id, tasks.type, tasks.description, tasks.points, tasks.completed, tasks.date, tasks.is_template
+      RETURNING 
+        tasks.id, 
+        tasks.goal_id, 
+        tasks.type, 
+        tasks.description, 
+        tasks.points, 
+        tasks.completed, 
+        tasks.date::text as date, 
+        tasks.is_template
     `
 
     if (updatedTask.length === 0) {

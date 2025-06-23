@@ -34,6 +34,7 @@ interface Task {
   points: number
   completed: boolean
   date: string
+  isTemplate?: boolean
 }
 
 interface DashboardProps {
@@ -130,7 +131,8 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
 
   const getTodaysTasks = () => {
     const today = new Date().toISOString().split("T")[0]
-    return tasks.filter((task) => task.date === today)
+    const todaysTasks = tasks.filter((task) => task.date === today && !task.isTemplate) // filter out template tasks
+    return todaysTasks
   }
 
   const getCompletedTasksToday = () => {
@@ -143,7 +145,7 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
 
   const getStreakData = () => {
     // Simple streak calculation - days with at least one completed task
-    const dates = [...new Set(tasks.filter((t) => t.completed).map((t) => t.date))].sort()
+    const dates = [...new Set(tasks.filter((t) => t.completed && !t.isTemplate).map((t) => t.date))].sort()
     let streak = 0
     const today = new Date()
 

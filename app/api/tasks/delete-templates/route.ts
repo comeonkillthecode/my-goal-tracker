@@ -1,39 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeTasks(tasks: any[]) {
-  writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2))
-}
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -57,20 +24,21 @@ export async function DELETE(request: NextRequest) {
   try {
     const { goalId } = await request.json()
 
-    const goals = readGoals()
-    const tasks = readTasks()
+    // Verify goal belongs to user and delete template tasks
+    const deletedTasks = await sql`
+      DELETE FROM tasks 
+      USING goals
+      WHERE tasks.goal_id = ${goalId} 
+        AND tasks.is_template = true
+        AND tasks.goal_id = goals.id 
+        AND goals.user_id = ${user.userId}
+      RETURNING tasks.id
+    `
 
-    // Verify goal belongs to user
-    const goal = goals.find((g: any) => g.id === goalId && g.userId === user.userId)
-    if (!goal) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    }
-
-    // Delete only template tasks for this goal
-    const filteredTasks = tasks.filter((task: any) => !(task.goalId === goalId && task.isTemplate === true))
-
-    writeTasks(filteredTasks)
-    return NextResponse.json({ message: "Template tasks deleted successfully" })
+    return NextResponse.json({
+      message: "Template tasks deleted successfully",
+      deletedCount: deletedTasks.length,
+    })
   } catch (error) {
     console.error("Template task deletion error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

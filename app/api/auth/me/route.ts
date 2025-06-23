@@ -1,22 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const USERS_FILE = join(DATA_DIR, "users.json")
-
-function readUsers() {
-  if (!existsSync(USERS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(USERS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -29,17 +13,23 @@ export async function GET(request: NextRequest) {
     }
 
     const decoded = jwt.verify(token, JWT_SECRET) as any
-    const users = readUsers()
-    const user = users.find((u: any) => u.id === decoded.userId)
 
-    if (!user) {
+    const users = await sql`
+      SELECT id, username, grok_api_id 
+      FROM users 
+      WHERE id = ${decoded.userId}
+    `
+
+    if (users.length === 0) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
+
+    const user = users[0]
 
     return NextResponse.json({
       id: user.id,
       username: user.username,
-      grokApiId: user.grokApiId,
+      grokApiId: user.grok_api_id,
     })
   } catch (error) {
     console.error("Auth check error:", error)

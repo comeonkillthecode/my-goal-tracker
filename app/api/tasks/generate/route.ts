@@ -1,62 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-const USERS_FILE = join(DATA_DIR, "users.json")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-
-// Ensure data directory exists
-if (!existsSync(DATA_DIR)) {
-  require("fs").mkdirSync(DATA_DIR, { recursive: true })
-}
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeTasks(tasks: any[]) {
-  writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2))
-}
-
-function readUsers() {
-  if (!existsSync(USERS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(USERS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function getNextTaskId() {
-  const tasks = readTasks()
-  return tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -73,7 +17,6 @@ function getUserFromToken(request: NextRequest) {
 
 // Fallback task suggestions when Grok API is not available
 const generateFallbackTasks = (goalTitle: string, goalDescription: string) => {
-  // Generic positive tasks
   const positiveTasks = [
     { description: `Work on ${goalTitle} for 30 minutes`, points: 25, type: "positive" },
     { description: `Research strategies for ${goalTitle}`, points: 15, type: "positive" },
@@ -82,7 +25,6 @@ const generateFallbackTasks = (goalTitle: string, goalDescription: string) => {
     { description: `Track progress on ${goalTitle}`, points: 10, type: "positive" },
   ]
 
-  // Generic negative tasks
   const negativeTasks = [
     { description: `Procrastinate on ${goalTitle}`, points: -15, type: "negative" },
     { description: `Skip planned work on ${goalTitle}`, points: -20, type: "negative" },
@@ -102,18 +44,21 @@ export async function POST(request: NextRequest) {
   try {
     const { goalId, goalTitle, goalDescription } = await request.json()
 
-    // Get goal details to check deadline
-    const goals = readGoals()
-    const goal = goals.find((g: any) => g.id === goalId && g.userId === user.userId)
-    if (!goal) {
+    // Verify goal belongs to user
+    const goalCheck = await sql`
+      SELECT id FROM goals WHERE id = ${goalId} AND user_id = ${user.userId}
+    `
+
+    if (goalCheck.length === 0) {
       return NextResponse.json({ error: "Goal not found" }, { status: 404 })
     }
 
-    // Check if tasks already exist for this goal (excluding templates)
-    const existingTasks = readTasks()
-    const goalHasNonTemplateTasks = existingTasks.some((t: any) => t.goalId === goalId && !t.isTemplate)
+    // Check if non-template tasks already exist for this goal
+    const existingTasks = await sql`
+      SELECT id FROM tasks WHERE goal_id = ${goalId} AND is_template = false
+    `
 
-    if (goalHasNonTemplateTasks) {
+    if (existingTasks.length > 0) {
       return NextResponse.json(
         {
           error: "Daily tasks already exist for this goal. Use regenerate to create new ones.",
@@ -122,13 +67,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Also clean up any existing template tasks for this goal before creating new ones
-    const cleanedTasks = existingTasks.filter((t: any) => !(t.goalId === goalId && t.isTemplate === true))
+    // Clean up any existing template tasks for this goal
+    await sql`
+      DELETE FROM tasks WHERE goal_id = ${goalId} AND is_template = true
+    `
 
     // Get user's Grok API key
-    const users = readUsers()
-    const userData = users.find((u: any) => u.id === user.userId)
-    const grokApiId = userData?.grokApiId
+    const userData = await sql`
+      SELECT grok_api_id FROM users WHERE id = ${user.userId}
+    `
+
+    const grokApiId = userData[0]?.grok_api_id
 
     let taskTemplates = []
 
@@ -181,30 +130,34 @@ export async function POST(request: NextRequest) {
       taskTemplates = generateFallbackTasks(goalTitle, goalDescription)
     }
 
-    // Create temporary task templates for today only (for review)
+    // Create template tasks for today only (for review)
     const today = new Date().toISOString().split("T")[0]
-    const tasks = cleanedTasks // Use cleaned tasks here
-    let nextTaskId = getNextTaskId()
+    const createdTasks = []
 
-    // Save only today's tasks for review - NOT the full daily instances yet
-    const todaysTasks = taskTemplates.map((task: any) => ({
-      id: nextTaskId++,
-      goalId,
-      type: task.type,
-      description: task.description,
-      points: task.points,
-      completed: false,
-      date: today,
-      isTemplate: true, // Mark as template for review
-      createdAt: new Date().toISOString(),
-    }))
+    for (const task of taskTemplates) {
+      const newTask = await sql`
+        INSERT INTO tasks (goal_id, type, description, points, completed, date, is_template)
+        VALUES (${goalId}, ${task.type}, ${task.description}, ${task.points}, false, ${today}, true)
+        RETURNING id, goal_id, type, description, points, completed, date, is_template, created_at
+      `
 
-    tasks.push(...todaysTasks)
-    writeTasks(tasks)
+      const createdTask = newTask[0]
+      createdTasks.push({
+        id: createdTask.id,
+        goalId: createdTask.goal_id,
+        type: createdTask.type,
+        description: createdTask.description,
+        points: createdTask.points,
+        completed: createdTask.completed,
+        date: createdTask.date,
+        isTemplate: createdTask.is_template,
+        createdAt: createdTask.created_at,
+      })
+    }
 
     return NextResponse.json({
       message: "Task templates generated for review",
-      tasks: todaysTasks,
+      tasks: createdTasks,
       source: grokApiId ? "ai" : "fallback",
     })
   } catch (error) {

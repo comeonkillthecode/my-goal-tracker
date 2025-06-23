@@ -1,49 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-
-// Ensure data directory exists
-if (!existsSync(DATA_DIR)) {
-  require("fs").mkdirSync(DATA_DIR, { recursive: true })
-}
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeTasks(tasks: any[]) {
-  writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2))
-}
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function getNextTaskId() {
-  const tasks = readTasks()
-  return tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -64,15 +21,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
   }
 
-  const goals = readGoals()
-  const tasks = readTasks()
+  try {
+    const tasks = await sql`
+      SELECT t.id, t.goal_id, t.type, t.description, t.points, t.completed, t.date, t.is_template, t.created_at
+      FROM tasks t
+      INNER JOIN goals g ON t.goal_id = g.id
+      WHERE g.user_id = ${user.userId}
+      ORDER BY t.date DESC, t.created_at DESC
+    `
 
-  // Get user's goals to filter tasks
-  const userGoals = goals.filter((g: any) => g.userId === user.userId)
-  const userGoalIds = userGoals.map((g: any) => g.id)
-  const userTasks = tasks.filter((t: any) => userGoalIds.includes(t.goalId))
-
-  return NextResponse.json(userTasks)
+    return NextResponse.json(
+      tasks.map((task) => ({
+        id: task.id,
+        goalId: task.goal_id,
+        type: task.type,
+        description: task.description,
+        points: task.points,
+        completed: task.completed,
+        date: task.date,
+        isTemplate: task.is_template,
+        createdAt: task.created_at,
+      })),
+    )
+  } catch (error) {
+    console.error("Tasks fetch error:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -88,31 +62,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 })
     }
 
-    const goals = readGoals()
-    const tasks = readTasks()
-
     // Verify goal belongs to user
-    const goal = goals.find((g: any) => g.id === goalId && g.userId === user.userId)
-    if (!goal) {
+    const goalCheck = await sql`
+      SELECT id FROM goals WHERE id = ${goalId} AND user_id = ${user.userId}
+    `
+
+    if (goalCheck.length === 0) {
       return NextResponse.json({ error: "Goal not found or unauthorized" }, { status: 404 })
     }
 
-    const newTask = {
-      id: getNextTaskId(),
-      goalId,
-      type,
-      description,
-      points,
-      completed: completed || false,
-      date,
-      isTemplate: isTemplate || false, // Add template flag support
-      createdAt: new Date().toISOString(),
-    }
+    const newTask = await sql`
+      INSERT INTO tasks (goal_id, type, description, points, completed, date, is_template)
+      VALUES (${goalId}, ${type}, ${description}, ${points}, ${completed || false}, ${date}, ${isTemplate || false})
+      RETURNING id, goal_id, type, description, points, completed, date, is_template, created_at
+    `
 
-    tasks.push(newTask)
-    writeTasks(tasks)
+    const task = newTask[0]
 
-    return NextResponse.json(newTask)
+    return NextResponse.json({
+      id: task.id,
+      goalId: task.goal_id,
+      type: task.type,
+      description: task.description,
+      points: task.points,
+      completed: task.completed,
+      date: task.date,
+      isTemplate: task.is_template,
+      createdAt: task.created_at,
+    })
   } catch (error) {
     console.error("Task creation error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

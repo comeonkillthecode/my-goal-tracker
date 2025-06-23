@@ -1,27 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
 import bcrypt from "bcryptjs"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const USERS_FILE = join(DATA_DIR, "users.json")
-
-function readUsers() {
-  if (!existsSync(USERS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(USERS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeUsers(users: any[]) {
-  writeFileSync(USERS_FILE, JSON.stringify(users, null, 2))
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -45,17 +25,17 @@ export async function PUT(request: NextRequest) {
   try {
     const { currentPassword, newPassword } = await request.json()
 
-    const users = readUsers()
-    const userIndex = users.findIndex((u: any) => u.id === user.userId)
+    // Get current user data
+    const userData = await sql`
+      SELECT password FROM users WHERE id = ${user.userId}
+    `
 
-    if (userIndex === -1) {
+    if (userData.length === 0) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    const userData = users[userIndex]
-
     // Verify current password
-    const isValidPassword = await bcrypt.compare(currentPassword, userData.password)
+    const isValidPassword = await bcrypt.compare(currentPassword, userData[0].password)
     if (!isValidPassword) {
       return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 })
     }
@@ -63,12 +43,13 @@ export async function PUT(request: NextRequest) {
     // Hash new password
     const hashedNewPassword = await bcrypt.hash(newPassword, 10)
 
-    users[userIndex] = {
-      ...users[userIndex],
-      password: hashedNewPassword,
-    }
+    // Update password
+    await sql`
+      UPDATE users 
+      SET password = ${hashedNewPassword}
+      WHERE id = ${user.userId}
+    `
 
-    writeUsers(users)
     return NextResponse.json({ message: "Password updated successfully" })
   } catch (error) {
     console.error("Password update error:", error)

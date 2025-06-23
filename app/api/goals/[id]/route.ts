@@ -1,43 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeGoals(goals: any[]) {
-  writeFileSync(GOALS_FILE, JSON.stringify(goals, null, 2))
-}
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeTasks(tasks: any[]) {
-  writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2))
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -62,22 +25,27 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     const goalId = Number.parseInt(params.id)
     const { title, description, targetDate } = await request.json()
 
-    const goals = readGoals()
-    const goalIndex = goals.findIndex((g: any) => g.id === goalId && g.userId === user.userId)
+    const updatedGoal = await sql`
+      UPDATE goals 
+      SET title = ${title}, description = ${description}, target_date = ${targetDate}
+      WHERE id = ${goalId} AND user_id = ${user.userId}
+      RETURNING id, user_id, title, description, target_date, created_at
+    `
 
-    if (goalIndex === -1) {
+    if (updatedGoal.length === 0) {
       return NextResponse.json({ error: "Goal not found" }, { status: 404 })
     }
 
-    goals[goalIndex] = {
-      ...goals[goalIndex],
-      title,
-      description,
-      targetDate,
-    }
+    const goal = updatedGoal[0]
 
-    writeGoals(goals)
-    return NextResponse.json(goals[goalIndex])
+    return NextResponse.json({
+      id: goal.id,
+      userId: goal.user_id,
+      title: goal.title,
+      description: goal.description,
+      targetDate: goal.target_date,
+      createdAt: goal.created_at,
+    })
   } catch (error) {
     console.error("Goal update error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -93,21 +61,16 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   try {
     const goalId = Number.parseInt(params.id)
 
-    const goals = readGoals()
-    const goalIndex = goals.findIndex((g: any) => g.id === goalId && g.userId === user.userId)
+    // Delete goal (tasks will be deleted automatically due to CASCADE)
+    const deletedGoal = await sql`
+      DELETE FROM goals 
+      WHERE id = ${goalId} AND user_id = ${user.userId}
+      RETURNING id
+    `
 
-    if (goalIndex === -1) {
+    if (deletedGoal.length === 0) {
       return NextResponse.json({ error: "Goal not found" }, { status: 404 })
     }
-
-    // Remove goal
-    goals.splice(goalIndex, 1)
-    writeGoals(goals)
-
-    // Remove associated tasks
-    const tasks = readTasks()
-    const filteredTasks = tasks.filter((t: any) => t.goalId !== goalId)
-    writeTasks(filteredTasks)
 
     return NextResponse.json({ message: "Goal deleted successfully" })
   } catch (error) {

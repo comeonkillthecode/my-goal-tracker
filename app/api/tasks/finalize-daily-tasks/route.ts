@@ -1,67 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeTasks(tasks: any[]) {
-  writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2))
-}
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function getNextTaskId() {
-  const tasks = readTasks()
-  return tasks.length > 0 ? Math.max(...tasks.map((t: any) => t.id)) + 1 : 1
-}
-
-// Generate all daily instances of tasks from today until goal deadline
-function generateDailyTaskInstances(taskTemplates: any[], goalDeadline: string) {
-  const tasks = []
-  const today = new Date()
-  const deadline = new Date(goalDeadline)
-
-  // Generate tasks for each day from today until deadline
-  for (let date = new Date(today); date <= deadline; date.setDate(date.getDate() + 1)) {
-    const dateStr = date.toISOString().split("T")[0]
-
-    taskTemplates.forEach((template) => {
-      tasks.push({
-        ...template,
-        date: dateStr,
-        completed: false,
-        isTemplate: false, // Remove template flag
-      })
-    })
-  }
-
-  return tasks
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -85,48 +24,56 @@ export async function POST(request: NextRequest) {
   try {
     const { goalId } = await request.json()
 
-    // Get goal details
-    const goals = readGoals()
-    const goal = goals.find((g: any) => g.id === goalId && g.userId === user.userId)
-    if (!goal) {
+    // Get goal details and verify ownership
+    const goalData = await sql`
+      SELECT target_date FROM goals WHERE id = ${goalId} AND user_id = ${user.userId}
+    `
+
+    if (goalData.length === 0) {
       return NextResponse.json({ error: "Goal not found" }, { status: 404 })
     }
 
-    const tasks = readTasks()
+    const goal = goalData[0]
 
-    // Find template tasks for this goal
-    const templateTasks = tasks.filter((t: any) => t.goalId === goalId && t.isTemplate === true)
+    // Get template tasks for this goal
+    const templateTasks = await sql`
+      SELECT type, description, points FROM tasks 
+      WHERE goal_id = ${goalId} AND is_template = true
+    `
 
     if (templateTasks.length === 0) {
       return NextResponse.json({ error: "No template tasks found" }, { status: 404 })
     }
 
-    // Remove template tasks from storage
-    const nonTemplateTasks = tasks.filter((t: any) => !(t.goalId === goalId && t.isTemplate === true))
+    // Delete template tasks
+    await sql`
+      DELETE FROM tasks WHERE goal_id = ${goalId} AND is_template = true
+    `
 
     // Generate daily task instances from today until goal deadline
-    const dailyTasks = generateDailyTaskInstances(templateTasks, goal.targetDate)
+    const today = new Date()
+    const deadline = new Date(goal.target_date)
+    const tasksCreated = []
 
-    let nextTaskId = getNextTaskId()
+    for (let date = new Date(today); date <= deadline; date.setDate(date.getDate() + 1)) {
+      const dateStr = date.toISOString().split("T")[0]
 
-    // Create new task instances with proper IDs
-    const newTasks = dailyTasks.map((task: any) => ({
-      ...task,
-      id: nextTaskId++,
-      createdAt: new Date().toISOString(),
-    }))
-
-    // Save all tasks
-    const allTasks = [...nonTemplateTasks, ...newTasks]
-    writeTasks(allTasks)
+      for (const template of templateTasks) {
+        const newTask = await sql`
+          INSERT INTO tasks (goal_id, type, description, points, completed, date, is_template)
+          VALUES (${goalId}, ${template.type}, ${template.description}, ${template.points}, false, ${dateStr}, false)
+          RETURNING id
+        `
+        tasksCreated.push(newTask[0])
+      }
+    }
 
     // Calculate statistics
-    const daysGenerated =
-      Math.ceil((new Date(goal.targetDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) + 1
+    const daysGenerated = Math.ceil((deadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) + 1
 
     return NextResponse.json({
       message: "Daily tasks finalized successfully",
-      totalTasksGenerated: newTasks.length,
+      totalTasksGenerated: tasksCreated.length,
       daysGenerated,
       tasksPerDay: templateTasks.length,
     })

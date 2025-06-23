@@ -1,23 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
-import { readFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const USERS_FILE = join(DATA_DIR, "users.json")
-
-function readUsers() {
-  if (!existsSync(USERS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(USERS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -30,13 +14,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Username and password are required" }, { status: 400 })
     }
 
-    const users = readUsers()
-
     // Find user
-    const user = users.find((u: any) => u.username === username)
-    if (!user) {
+    const users = await sql`
+      SELECT id, username, password, grok_api_id 
+      FROM users 
+      WHERE username = ${username}
+    `
+
+    if (users.length === 0) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
     }
+
+    const user = users[0]
 
     // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password)
@@ -50,7 +39,7 @@ export async function POST(request: NextRequest) {
     // Create response
     const response = NextResponse.json({
       message: "Login successful",
-      user: { id: user.id, username: user.username, grokApiId: user.grokApiId },
+      user: { id: user.id, username: user.username, grokApiId: user.grok_api_id },
     })
 
     // Set HTTP-only cookie

@@ -1,35 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -50,18 +21,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
   }
 
-  const goals = readGoals()
-  const tasks = readTasks()
+  try {
+    const result = await sql`
+      SELECT COALESCE(SUM(t.points), 0) as total_points
+      FROM tasks t
+      INNER JOIN goals g ON t.goal_id = g.id
+      WHERE g.user_id = ${user.userId} AND t.completed = true
+    `
 
-  // Get user's goals to filter tasks
-  const userGoals = goals.filter((g: any) => g.userId === user.userId)
-  const userGoalIds = userGoals.map((g: any) => g.id)
-  const userTasks = tasks.filter((t: any) => userGoalIds.includes(t.goalId))
-
-  // Calculate total points from completed tasks
-  const totalPoints = userTasks
-    .filter((task: any) => task.completed)
-    .reduce((sum: number, task: any) => sum + task.points, 0)
-
-  return NextResponse.json({ total: totalPoints })
+    return NextResponse.json({ total: Number(result[0].total_points) })
+  } catch (error) {
+    console.error("Points calculation error:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
 }

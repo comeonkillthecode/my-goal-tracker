@@ -1,39 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
-import { readFileSync, writeFileSync, existsSync } from "fs"
-import { join } from "path"
-
-const DATA_DIR = join(process.cwd(), "data")
-const TASKS_FILE = join(DATA_DIR, "tasks.json")
-const GOALS_FILE = join(DATA_DIR, "goals.json")
-
-function readTasks() {
-  if (!existsSync(TASKS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(TASKS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
-
-function writeTasks(tasks: any[]) {
-  writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2))
-}
-
-function readGoals() {
-  if (!existsSync(GOALS_FILE)) {
-    return []
-  }
-  try {
-    const data = readFileSync(GOALS_FILE, "utf8")
-    return JSON.parse(data)
-  } catch {
-    return []
-  }
-}
+import { sql } from "@/lib/db"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
@@ -58,28 +25,32 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const taskId = Number.parseInt(params.id)
     const { completed } = await request.json()
 
-    const tasks = readTasks()
-    const goals = readGoals()
+    const updatedTask = await sql`
+      UPDATE tasks 
+      SET completed = ${completed}, updated_at = CURRENT_TIMESTAMP
+      FROM goals
+      WHERE tasks.id = ${taskId} 
+        AND tasks.goal_id = goals.id 
+        AND goals.user_id = ${user.userId}
+      RETURNING tasks.id, tasks.goal_id, tasks.type, tasks.description, tasks.points, tasks.completed, tasks.date, tasks.is_template
+    `
 
-    const taskIndex = tasks.findIndex((t: any) => t.id === taskId)
-    if (taskIndex === -1) {
-      return NextResponse.json({ error: "Task not found" }, { status: 404 })
+    if (updatedTask.length === 0) {
+      return NextResponse.json({ error: "Task not found or unauthorized" }, { status: 404 })
     }
 
-    // Verify task belongs to user's goal
-    const task = tasks[taskIndex]
-    const goal = goals.find((g: any) => g.id === task.goalId && g.userId === user.userId)
-    if (!goal) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    }
+    const task = updatedTask[0]
 
-    tasks[taskIndex] = {
-      ...tasks[taskIndex],
-      completed,
-    }
-
-    writeTasks(tasks)
-    return NextResponse.json(tasks[taskIndex])
+    return NextResponse.json({
+      id: task.id,
+      goalId: task.goal_id,
+      type: task.type,
+      description: task.description,
+      points: task.points,
+      completed: task.completed,
+      date: task.date,
+      isTemplate: task.is_template,
+    })
   } catch (error) {
     console.error("Task update error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -94,42 +65,49 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 
   try {
     const taskId = Number.parseInt(params.id)
-    const { goalId, type, description, points, date, completed } = await request.json()
+    const { goalId, type, description, points, date, completed, isTemplate } = await request.json()
 
     if (!goalId || !type || !description || points === undefined || !date) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 })
     }
 
-    const tasks = readTasks()
-    const goals = readGoals()
-
-    const taskIndex = tasks.findIndex((t: any) => t.id === taskId)
-    if (taskIndex === -1) {
-      return NextResponse.json({ error: "Task not found" }, { status: 404 })
-    }
-
     // Verify both old and new goals belong to user
-    const oldTask = tasks[taskIndex]
-    const oldGoal = goals.find((g: any) => g.id === oldTask.goalId && g.userId === user.userId)
-    const newGoal = goals.find((g: any) => g.id === goalId && g.userId === user.userId)
+    const goalCheck = await sql`
+      SELECT id FROM goals WHERE id = ${goalId} AND user_id = ${user.userId}
+    `
 
-    if (!oldGoal || !newGoal) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
+    if (goalCheck.length === 0) {
+      return NextResponse.json({ error: "Goal not found or unauthorized" }, { status: 404 })
     }
 
-    tasks[taskIndex] = {
-      ...tasks[taskIndex],
-      goalId,
-      type,
-      description,
-      points,
-      date,
-      completed,
-      updatedAt: new Date().toISOString(),
+    const updatedTask = await sql`
+      UPDATE tasks 
+      SET goal_id = ${goalId}, type = ${type}, description = ${description}, 
+          points = ${points}, date = ${date}, completed = ${completed}, 
+          is_template = ${isTemplate || false}, updated_at = CURRENT_TIMESTAMP
+      FROM goals
+      WHERE tasks.id = ${taskId} 
+        AND tasks.goal_id = goals.id 
+        AND goals.user_id = ${user.userId}
+      RETURNING tasks.id, tasks.goal_id, tasks.type, tasks.description, tasks.points, tasks.completed, tasks.date, tasks.is_template
+    `
+
+    if (updatedTask.length === 0) {
+      return NextResponse.json({ error: "Task not found or unauthorized" }, { status: 404 })
     }
 
-    writeTasks(tasks)
-    return NextResponse.json(tasks[taskIndex])
+    const task = updatedTask[0]
+
+    return NextResponse.json({
+      id: task.id,
+      goalId: task.goal_id,
+      type: task.type,
+      description: task.description,
+      points: task.points,
+      completed: task.completed,
+      date: task.date,
+      isTemplate: task.is_template,
+    })
   } catch (error) {
     console.error("Task update error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -145,23 +123,18 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   try {
     const taskId = Number.parseInt(params.id)
 
-    const tasks = readTasks()
-    const goals = readGoals()
+    const deletedTask = await sql`
+      DELETE FROM tasks 
+      USING goals
+      WHERE tasks.id = ${taskId} 
+        AND tasks.goal_id = goals.id 
+        AND goals.user_id = ${user.userId}
+      RETURNING tasks.id
+    `
 
-    const taskIndex = tasks.findIndex((t: any) => t.id === taskId)
-    if (taskIndex === -1) {
-      return NextResponse.json({ error: "Task not found" }, { status: 404 })
+    if (deletedTask.length === 0) {
+      return NextResponse.json({ error: "Task not found or unauthorized" }, { status: 404 })
     }
-
-    // Verify task belongs to user's goal
-    const task = tasks[taskIndex]
-    const goal = goals.find((g: any) => g.id === task.goalId && g.userId === user.userId)
-    if (!goal) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
-    }
-
-    tasks.splice(taskIndex, 1)
-    writeTasks(tasks)
 
     return NextResponse.json({ message: "Task deleted successfully" })
   } catch (error) {

@@ -231,8 +231,8 @@ export default function GoalCard({
           {/* Expanded Task Management */}
           {showTasksExpanded && (
             <div className="border-t pt-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="font-medium text-gray-900">Task Management</h4>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-0 sm:px-0">
+                <h4 className="font-medium text-gray-900 text-base sm:text-lg">Task Management</h4>
                 <div className="flex space-x-2">
                   {!hasAnyTasks() ? (
                     <Button

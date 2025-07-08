@@ -306,6 +306,9 @@ export default function Home() {
             )}
           </CardContent>
         </Card>
+        <a href="https://turbo0.com/item/my-goal-tracker" target="_blank" rel="noopener noreferrer">
+          <img src="https://img.turbo0.com/badge-listed-light.svg" alt="Listed on Turbo0" style="height: 54px; width: auto;" />
+        </a>
 
         <div className="text-center mt-6 text-sm text-gray-500">
           <p>Start your journey to achieving your goals today!</p>
